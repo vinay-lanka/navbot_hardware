@@ -5,8 +5,13 @@
 #include <ros.h>
 #include <geometry_msgs/Twist.h>
 #include<PID_v1.h>
+#include <geometry_msgs/Vector3Stamped.h>
+#include <ros/time.h>
+
 
 ros::NodeHandle  nh;
+
+#define LOOPTIME 10
 
 Motor right(11,10,20,21);
 Motor left(9,8,18,19);
@@ -14,8 +19,8 @@ Motor left(9,8,18,19);
 volatile long encoder0Pos = 0;    // encoder 1
 volatile long encoder1Pos = 0;    // encoder 2
 
-double left_kp = 3.8 , left_ki = 0 , left_kd = 0.03;             // modify for optimal performance
-double right_kp = 4 , right_ki = 0 , right_kd = 0.03;
+double left_kp = 3.8 , left_ki = 0 , left_kd = 0.0;             // modify for optimal performance
+double right_kp = 4 , right_ki = 0 , right_kd = 0.0;
 
 double right_input = 0, right_output = 0, right_setpoint = 0;
 PID rightPID(&right_input, &right_output, &right_setpoint, right_kp, right_ki, right_kd, DIRECT);  
@@ -47,10 +52,16 @@ void cmd_vel_cb( const geometry_msgs::Twist& twist){
 }
 
 ros::Subscriber<geometry_msgs::Twist> sub("cmd_vel", cmd_vel_cb );
+geometry_msgs::Vector3Stamped speed_msg;                                //create a "speed_msg" ROS message
+ros::Publisher speed_pub("speed", &speed_msg);                          //create a publisher to ROS topic "speed" using the "speed_msg" type
+
+double speed_act_left = 0;                    //Actual speed for left wheel in m/s
+double speed_act_right = 0;                    //Command speed for left wheel in m/s 
 
 void setup() {
   nh.initNode();
   nh.subscribe(sub);
+  nh.advertise(speed_pub);                  //prepare to publish speed in ROS topic
 //  Serial.begin(115200);
   
   rightPID.SetMode(AUTOMATIC);
@@ -70,27 +81,9 @@ void setup() {
 
 void loop() {
   currentMillis = millis();
-  if (currentMillis - prevMillis >= 10){
+  if (currentMillis - prevMillis >= LOOPTIME){
     prevMillis = currentMillis;
-//    if(Serial.available()>0){
-//      char c = Serial.read();
-//      if(c == 'a'){
-//        demandx = 0.5;
-//        demandz=0;
-//      }else if (c == 'b'){
-//        demandx = -0.5;
-//        demandz = 0;
-//      }else if(c == 'c'){
-//        demandx = 0;
-//        demandz = 1;
-//      }else if(c == 'd'){
-//        demandx = 0;
-//        demandz = 1;
-//      }else if(c == 'e'){
-//        demandx = 0;
-//        demandz = 0;
-//      }
-//    }
+
     demand_speed_left = demandx - (demandz*0.1075);
     demand_speed_right = demandx + (demandz*0.1075);
   
@@ -100,6 +93,9 @@ void loop() {
       in encoder counts to match with the required amount, hence controlling the speed. */
     encoder0Diff = encoder0Pos - encoder0Prev; // Get difference between ticks to compute speed
     encoder1Diff = encoder1Pos - encoder1Prev;
+    
+    speed_act_left = encoder0Diff/39.65;                    
+    speed_act_right = encoder1Diff/39.65; 
   
     encoder0Error = (demand_speed_left*39.65)-encoder0Diff; // 3965 ticks in 1m = 39.65 ticks in 10ms, due to the 10 millis loop
     encoder1Error = (demand_speed_right*39.65)-encoder1Diff;
@@ -121,9 +117,20 @@ void loop() {
 //    Serial.print(",");
 //    Serial.println(encoder1Pos);
   }
-  
+  publishSpeed(LOOPTIME);
+  nh.spinOnce();
 }
 
+
+//Publish function for odometry, uses a vector type message to send the data (message type is not meant for that but that's easier than creating a specific message type)
+void publishSpeed(double time) {
+  speed_msg.header.stamp = nh.now();      //timestamp for odometry data
+  speed_msg.vector.x = speed_act_left;    //left wheel speed (in m/s)
+  speed_msg.vector.y = speed_act_right;   //right wheel speed (in m/s)
+  speed_msg.vector.z = time/1000;         //looptime, should be the same as specified in LOOPTIME (in s)
+  speed_pub.publish(&speed_msg);
+//  nh.loginfo("Publishing odometry");
+}
 
 
 // ************** encoders interrupts **************
